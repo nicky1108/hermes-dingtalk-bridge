@@ -27,6 +27,12 @@ class HermesClient:
     def __init__(self, config: BridgeConfig) -> None:
         self.config = config
 
+    def _stream_timeout(self) -> tuple[int, int]:
+        return (
+            self.config.request_timeout_seconds,
+            self.config.stream_read_timeout_seconds,
+        )
+
     def _request(self, method: str, path: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         url = f"{self.config.hermes_api_base.rstrip('/')}{path}"
         data = None
@@ -103,7 +109,7 @@ class HermesClient:
             url,
             headers=headers,
             json=payload,
-            timeout=self.config.request_timeout_seconds,
+            timeout=self._stream_timeout(),
             stream=True,
         ) as response:
             try:

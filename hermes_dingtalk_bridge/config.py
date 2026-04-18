@@ -35,6 +35,7 @@ class BridgeConfig:
     reconnect_jitter: float = 0.3
     inactivity_reconnect_seconds: int = 0
     request_timeout_seconds: int = 60
+    stream_read_timeout_seconds: int = 300
     message_chunk_size: int = DEFAULT_MESSAGE_CHUNK_SIZE
     session_store_max_messages: int = 5000
     include_metadata_header: bool = True
@@ -66,6 +67,8 @@ class BridgeConfig:
             errors.append("session_ttl_days must be > 0")
         if self.message_chunk_size <= 0:
             errors.append("message_chunk_size must be > 0")
+        if self.stream_read_timeout_seconds <= 0:
+            errors.append("stream_read_timeout_seconds must be > 0")
         if self.reply_mode not in {"markdown", "card"}:
             errors.append("reply_mode must be markdown or card")
         if self.reply_mode == "card" and not self.card_template_id:
@@ -182,6 +185,7 @@ def load_config(config_path: str | Path | None = None) -> BridgeConfig:
         reconnect_jitter=float(_env_lookup("HERMES_DINGTALK_RECONNECT_JITTER", dotenv, merged.get("reconnect_jitter", 0.3))),
         inactivity_reconnect_seconds=int(_env_lookup("HERMES_DINGTALK_INACTIVITY_RECONNECT_SECONDS", dotenv, merged.get("inactivity_reconnect_seconds", 0))),
         request_timeout_seconds=int(_env_lookup("HERMES_DINGTALK_REQUEST_TIMEOUT_SECONDS", dotenv, merged.get("request_timeout_seconds", 60))),
+        stream_read_timeout_seconds=int(_env_lookup("HERMES_DINGTALK_STREAM_READ_TIMEOUT_SECONDS", dotenv, merged.get("stream_read_timeout_seconds", 300))),
         message_chunk_size=int(_env_lookup("HERMES_DINGTALK_MESSAGE_CHUNK_SIZE", dotenv, merged.get("message_chunk_size", DEFAULT_MESSAGE_CHUNK_SIZE))),
         session_store_max_messages=int(_env_lookup("HERMES_DINGTALK_SESSION_STORE_MAX_MESSAGES", dotenv, merged.get("session_store_max_messages", 5000))),
         include_metadata_header=_as_bool(_env_lookup("HERMES_DINGTALK_INCLUDE_METADATA_HEADER", dotenv, merged.get("include_metadata_header")), True),

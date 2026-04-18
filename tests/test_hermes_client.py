@@ -1,5 +1,6 @@
 import unittest
 
+from hermes_dingtalk_bridge.config import BridgeConfig
 from hermes_dingtalk_bridge.hermes_client import HermesClient
 
 
@@ -36,3 +37,15 @@ class HermesClientToolEventTests(unittest.TestCase):
             }
         }
         self.assertIsNone(HermesClient._tool_event_message(event, done=True))
+
+    def test_stream_timeout_uses_dedicated_read_timeout(self):
+        client = HermesClient(
+            BridgeConfig(
+                client_id='c',
+                client_secret='s',
+                hermes_api_key='k',
+                request_timeout_seconds=15,
+                stream_read_timeout_seconds=240,
+            )
+        )
+        self.assertEqual(client._stream_timeout(), (15, 240))

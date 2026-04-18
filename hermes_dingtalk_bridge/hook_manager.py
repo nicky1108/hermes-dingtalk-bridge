@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -187,6 +188,13 @@ def _ensure_runtime_setup(*, interactive: bool) -> dict[str, Any]:
         'HERMES_DINGTALK_REPLY_MODE',
         'reply_mode',
     )
+    current_api_server_key = _resolved_value(
+        bridge_config,
+        dotenv,
+        'API_SERVER_KEY',
+        'HERMES_DINGTALK_HERMES_API_KEY',
+        'hermes_api_key',
+    )
     current_card_template_id = _resolved_value(
         bridge_config,
         dotenv,
@@ -210,6 +218,12 @@ def _ensure_runtime_setup(*, interactive: bool) -> dict[str, Any]:
         if interactive:
             env_updates['HERMES_DINGTALK_CLIENT_SECRET'] = _prompt_nonempty('DingTalk Client Secret', secret=True)
             prompted_fields.append('client_secret')
+        else:
+            needs_prompt = True
+    if not current_api_server_key:
+        if interactive:
+            env_updates['API_SERVER_KEY'] = _prompt_nonempty('Hermes API_SERVER_KEY', secret=True)
+            prompted_fields.append('api_server_key')
         else:
             needs_prompt = True
     if not current_reply_mode:
@@ -237,6 +251,7 @@ def _ensure_runtime_setup(*, interactive: bool) -> dict[str, Any]:
         'config_path': str(config_path),
         'env_path': str(env_path),
         'reply_mode': reply_mode,
+        'api_server_key_configured': bool(current_api_server_key or env_updates.get('API_SERVER_KEY')),
         'card_template_id_configured': bool(card_template_id),
     }
 
@@ -271,9 +286,7 @@ def install_hook(*, interactive: bool | None = None) -> HookStatus:
 def uninstall_hook() -> HookStatus:
     hook_dir = _hook_dir()
     if hook_dir.exists():
-        for child in hook_dir.iterdir():
-            child.unlink()
-        hook_dir.rmdir()
+        shutil.rmtree(hook_dir)
     return status()
 
 

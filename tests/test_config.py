@@ -42,3 +42,13 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg.client_id, "legacy-id")
             self.assertEqual(cfg.client_secret, "legacy-secret")
             self.assertEqual(cfg.hermes_api_key, "api-key")
+
+    def test_reads_stream_read_timeout_from_yaml(self):
+        with tempfile.TemporaryDirectory() as td:
+            config_path = Path(td) / "bridge.yaml"
+            config_path.write_text(
+                "stream_read_timeout_seconds: 240\n",
+                encoding="utf-8",
+            )
+            cfg = load_config(config_path)
+            self.assertEqual(cfg.stream_read_timeout_seconds, 240)

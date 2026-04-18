@@ -39,6 +39,7 @@ class CardProgressReporter:
         self._answer_text = ""
         self._phase = "starting"
         self._last_push_at = 0.0
+        self._last_pushed_answer_length = 0
         self._last_pushed_content = ""
         self._disabled = False
 
@@ -106,7 +107,7 @@ class CardProgressReporter:
         if not self.active:
             return
         now = time.monotonic()
-        if not force and now - self._last_push_at < 0.35 and len(self._answer_text) - len(self._last_pushed_content) < 120:
+        if not force and now - self._last_push_at < 0.35 and len(self._answer_text) - self._last_pushed_answer_length < 120:
             return
         content = self._render_locked()
         if not force and content == self._last_pushed_content:
@@ -115,6 +116,7 @@ class CardProgressReporter:
             self._disabled = True
             return
         self._last_push_at = now
+        self._last_pushed_answer_length = len(self._answer_text)
         self._last_pushed_content = content
 
     def _render_locked(self) -> str:
