@@ -7,6 +7,15 @@ PYTHONPATH="$HOME/.hermes/plugins/hermes-dingtalk-bridge" python3 -m hermes_ding
 hermes gateway restart
 ```
 
+On first install, `hook install` now checks whether DingTalk bridge credentials and reply-mode settings already exist in your Hermes environment.
+If they are missing, it prompts for:
+- DingTalk Client ID
+- DingTalk Client Secret
+- reply mode: `markdown` or `card`
+- card template id when reply mode is `card`
+
+The installer writes credentials into `~/.hermes/.env` and bridge reply-mode settings into `~/.hermes/dingtalk-bridge.yaml`.
+
 ## Quick checks / 快速检查
 
 ```bash

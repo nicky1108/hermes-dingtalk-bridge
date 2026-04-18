@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import threading
 import time
 from collections import defaultdict
 
 from .access_control import decide_access
 from .ack_reaction import AckReactionService
+from .card_sender import CardReplyHandle
 from .config import BridgeConfig
 from .connection_manager import ConnectionManager
 from .dingtalk_client import DingTalkClient, DingTalkStreamRunner
-from .hermes_client import HermesClient
+from .hermes_client import HermesClient, HermesStreamFallbackRequested
 from .inbound_parser import parse_inbound_message
 from .message_codec import build_conversation_name, build_hermes_input
 from .models import BridgeStatus, ConversationBinding, MessageRecord
@@ -19,6 +22,124 @@ from .session_store import SessionStore
 from .runtime_status import initialize_runtime_status, mark_inbound, mark_runtime_error, mark_runtime_stopped, status_path
 
 logger = logging.getLogger(__name__)
+
+
+class CardProgressReporter:
+    def __init__(self, sender: OutboundSender, event, logger) -> None:
+        self._sender = sender
+        self._event = event
+        self._logger = logger
+        self._handle: CardReplyHandle | None = None
+        self._lock = threading.Lock()
+        self._progress_lines = [
+            "已接收钉钉消息",
+            "正在整理上下文",
+        ]
+        self._tool_lines: list[str] = []
+        self._answer_text = ""
+        self._phase = "starting"
+        self._last_push_at = 0.0
+        self._last_pushed_content = ""
+        self._disabled = False
+
+    @property
+    def active(self) -> bool:
+        return not self._disabled and self._handle is not None
+
+    @property
+    def card_handle(self) -> CardReplyHandle | None:
+        return self._handle
+
+    def start(self) -> None:
+        handle = self._sender.start_card_reply(self._event, self._render_locked())
+        if handle is None:
+            self._disabled = True
+            return
+        self._handle = handle
+
+    def mark_context_ready(self, *, has_quote: bool, attachment_count: int) -> None:
+        details: list[str] = ["上下文已整理"]
+        if has_quote:
+            details.append("包含引用消息")
+        if attachment_count:
+            details.append(f"附件 {attachment_count} 个")
+        with self._lock:
+            self._phase = "waiting"
+            self._progress_lines = [
+                "已接收钉钉消息",
+                "已整理上下文" + (f"（{'，'.join(details[1:])}）" if len(details) > 1 else ""),
+                "正在请求 Hermes 生成回复",
+            ]
+            self._push_locked(force=True)
+
+    def on_tool_event(self, message: str) -> None:
+        with self._lock:
+            if message not in self._tool_lines:
+                self._tool_lines.append(message)
+            self._push_locked(force=True)
+
+    def on_text_delta(self, delta: str) -> None:
+        with self._lock:
+            self._phase = "streaming"
+            self._answer_text += delta
+            self._push_locked()
+
+    def finalize(self, answer: str) -> None:
+        with self._lock:
+            self._phase = "done"
+            self._answer_text = answer.strip()
+            self._progress_lines = [
+                "已接收钉钉消息",
+                "已整理上下文",
+                "已获取 Hermes 回复",
+                "已回写当前卡片",
+            ]
+            self._push_locked(force=True, finalize=True)
+
+    def fail(self, exc: Exception) -> None:
+        with self._lock:
+            self._phase = "error"
+            self._tool_lines.append(f"处理失败: {str(exc).strip()[:200] or exc.__class__.__name__}")
+            self._push_locked(force=True, finalize=True, is_error=True)
+
+    def _push_locked(self, *, force: bool = False, finalize: bool = False, is_error: bool = False) -> None:
+        if not self.active:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_push_at < 0.35 and len(self._answer_text) - len(self._last_pushed_content) < 120:
+            return
+        content = self._render_locked()
+        if not force and content == self._last_pushed_content:
+            return
+        if not self._sender.update_card_reply(self._handle, content, finalize=finalize, is_error=is_error):
+            self._disabled = True
+            return
+        self._last_push_at = now
+        self._last_pushed_content = content
+
+    def _render_locked(self) -> str:
+        title = {
+            "starting": "处理中",
+            "waiting": "处理中",
+            "streaming": "正在生成回复",
+            "done": "处理完成",
+            "error": "处理失败",
+        }.get(self._phase, "处理中")
+        lines = [title, "", "处理进度："]
+        for item in self._progress_lines:
+            lines.append(f"- {item}")
+        if self._tool_lines:
+            lines.extend(["", "工具与步骤摘要："])
+            for item in self._tool_lines[-6:]:
+                lines.append(f"- {item}")
+        lines.extend(["", "当前回复：", ""])
+        if self._answer_text.strip():
+            lines.append(self._answer_text.strip())
+        elif self._phase == "error":
+            lines.append("当前请求未能完成，请查看上面的错误摘要。")
+        else:
+            lines.append("正在生成，请稍候…")
+        return "\n".join(lines).strip()
 
 
 class BridgeService:
@@ -131,15 +252,21 @@ class BridgeService:
                     reaction_attached_at = time.time()
 
             try:
+                progress = CardProgressReporter(self.sender, event, logger)
                 binding = self.store.get_binding(event.account_id, event.conversation_id)
                 conversation = binding.hermes_conversation if binding else build_conversation_name(
                     self.config, event.account_id, event.conversation_id
                 )
+                progress.start()
                 quote = event.quoted
                 if quote and not quote.text and quote.message_id:
                     stored_quote = self.store.get_quote(event.account_id, quote.message_id)
                     if stored_quote is not None:
                         quote = stored_quote
+                progress.mark_context_ready(
+                    has_quote=quote is not None,
+                    attachment_count=len(event.attachments),
+                )
                 hermes_input = build_hermes_input(event, self.config, quote)
                 metadata = {
                     "platform": "dingtalk",
@@ -151,15 +278,35 @@ class BridgeService:
                     "message_id": event.message_id,
                 }
                 logger.info("Sending message %s to Hermes conversation=%s", event.message_id, conversation)
-                reply = await asyncio.to_thread(
-                    self.hermes.create_response,
-                    conversation=conversation,
-                    input_text=hermes_input,
-                    previous_response_id=binding.last_response_id if binding else None,
-                    metadata=metadata,
-                )
+                try:
+                    reply = await asyncio.to_thread(
+                        self.hermes.create_response_stream if progress.active else self.hermes.create_response,
+                        conversation=conversation,
+                        input_text=hermes_input,
+                        previous_response_id=binding.last_response_id if binding else None,
+                        metadata=metadata,
+                        **(
+                            {
+                                "on_text_delta": progress.on_text_delta,
+                                "on_tool_event": progress.on_tool_event,
+                            }
+                            if progress.active
+                            else {}
+                        ),
+                    )
+                except HermesStreamFallbackRequested:
+                    progress.on_tool_event("当前 Hermes 服务未提供增量事件，已回退到普通回复模式")
+                    reply = await asyncio.to_thread(
+                        self.hermes.create_response,
+                        conversation=conversation,
+                        input_text=hermes_input,
+                        previous_response_id=binding.last_response_id if binding else None,
+                        metadata=metadata,
+                    )
                 logger.info("Hermes reply for %s: %r", event.message_id, reply.text[:200])
-                await self.sender.send_reply(event, reply.text)
+                progress.finalize(reply.text)
+                if not progress.active:
+                    await self.sender.send_reply(event, reply.text, card_handle=progress.card_handle)
                 logger.info("Reply dispatched back to DingTalk for %s", event.message_id)
                 now_ms = event.created_at_ms or int(time.time() * 1000)
                 self.store.upsert_binding(
@@ -184,6 +331,9 @@ class BridgeService:
                     )
                 )
                 self.store.mark_processed(event.account_id, event.message_id, now_ms=now_ms)
+            except Exception as exc:
+                progress.fail(exc)
+                raise
             finally:
                 if reaction_attached_at is not None:
                     await asyncio.to_thread(
@@ -217,6 +367,3 @@ class BridgeService:
         except Exception as exc:
             return BridgeStatus(False, f"DingTalk credential check failed: {exc}", details)
         return BridgeStatus(True, "ok", details)
-
-
-import contextlib

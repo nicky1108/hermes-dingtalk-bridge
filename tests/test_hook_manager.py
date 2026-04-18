@@ -11,10 +11,31 @@ class HookManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             fake_home = Path(td)
             with mock.patch('hermes_dingtalk_bridge.hook_manager.get_hermes_home', return_value=fake_home):
-                status = hook_manager.install_hook()
+                status = hook_manager.install_hook(interactive=False)
                 self.assertTrue(status.installed)
+                self.assertTrue(status.details['setup_pending'])
                 hook_dir = fake_home / 'hooks' / hook_manager.HOOK_NAME
                 self.assertTrue((hook_dir / 'HOOK.yaml').exists())
                 self.assertTrue((hook_dir / 'handler.py').exists())
                 removed = hook_manager.uninstall_hook()
                 self.assertFalse(removed.installed)
+
+    def test_install_hook_bootstraps_missing_credentials_and_card_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td)
+            with mock.patch('hermes_dingtalk_bridge.hook_manager.get_hermes_home', return_value=fake_home), \
+                 mock.patch('builtins.input', side_effect=['client-id', 'card', 'tpl.schema']), \
+                 mock.patch('getpass.getpass', return_value='client-secret'):
+                status = hook_manager.install_hook(interactive=True)
+                self.assertTrue(status.installed)
+                self.assertFalse(status.details['setup_pending'])
+                self.assertEqual(
+                    status.details['prompted_fields'],
+                    ['client_id', 'client_secret', 'reply_mode', 'card_template_id'],
+                )
+                env_text = (fake_home / '.env').read_text(encoding='utf-8')
+                self.assertIn('HERMES_DINGTALK_CLIENT_ID=client-id', env_text)
+                self.assertIn('HERMES_DINGTALK_CLIENT_SECRET=client-secret', env_text)
+                config_text = (fake_home / 'dingtalk-bridge.yaml').read_text(encoding='utf-8')
+                self.assertIn('reply_mode: card', config_text)
+                self.assertIn('card_template_id: tpl.schema', config_text)

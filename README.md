@@ -73,11 +73,31 @@ This does three things:
 2. installs the Hermes gateway startup hook
 3. restarts Hermes gateway so the bridge is activated immediately
 
+On first `hook install`, the bridge checks whether your Hermes environment already has the needed DingTalk bridge settings.
+If not, it interactively prompts for:
+- DingTalk Client ID
+- DingTalk Client Secret
+- reply mode (`markdown` or `card`)
+- card template id when `reply_mode=card`
+
+It writes credentials to `~/.hermes/.env` and reply-mode settings to `~/.hermes/dingtalk-bridge.yaml`.
+
 **中文**
 这条命令会完成三件事：
 1. 把插件安装到 `~/.hermes/plugins/`
 2. 安装 Hermes gateway 启动 hook
 3. 重启 Hermes gateway，让 bridge 立即生效
+
+首次执行 `hook install` 时，bridge 会检查 Hermes 环境里是否已有钉钉桥接所需设置。
+如果缺失，会在终端里交互式询问：
+- DingTalk Client ID
+- DingTalk Client Secret
+- 回复模式：`markdown` 或 `card`
+- 如果选择 `card`，再询问 `card_template_id`
+
+写入位置：
+- 凭证写入 `~/.hermes/.env`
+- 回复模式和卡片模板写入 `~/.hermes/dingtalk-bridge.yaml`
 
 ---
 
@@ -150,6 +170,48 @@ Card 模式现在已经按 soimy 的核心思路实现：
 
 If card delivery fails, the bridge falls back to markdown automatically.  
 如果 card 发送失败，bridge 会自动回退到 markdown。
+
+### Streaming progress in card mode / Card 模式下的过程流
+
+**English**
+When Hermes emits streaming events, the bridge updates the same DingTalk card in-place during processing instead of waiting for the final answer.
+Typical visible lines include:
+
+```text
+🔎 search_files: "SOUL.md"
+💻 terminal: "date '+%F %T %Z (%A)'"
+📄 read_file: "./README.md"
+```
+
+The final card usually contains:
+- current progress
+- a short list of tool calls / execution steps
+- the partial or final answer text generated so far
+
+Important limits:
+- tool-step lines appear only if Hermes actually calls tools
+- if the request is a plain model-only reply, you may only see generation progress
+- if Hermes times out or does not emit intermediate events, the card cannot invent tool logs that were never sent
+
+**中文**
+当 Hermes 发出流式事件时，bridge 会持续更新同一张钉钉卡片，而不是等全部结束后一次性回写。
+常见可见行大致如下：
+
+```text
+🔎 search_files: "SOUL.md"
+💻 terminal: "date '+%F %T %Z (%A)'"
+📄 read_file: "./README.md"
+```
+
+最终卡片里通常会同时包含：
+- 当前处理进度
+- 简短的工具调用 / 执行步骤摘要
+- 已经生成出来的部分或完整回复
+
+边界说明：
+- 只有当 Hermes 真的调用了工具，卡片里才会出现这些工具步骤行
+- 如果只是普通模型回复，没有工具调用，就只能看到生成进度
+- 如果 Hermes 超时，或没有发出中间事件，bridge 不会凭空伪造工具日志
 
 ---
 
@@ -225,6 +287,8 @@ This file is useful for checking whether the bridge was started by gateway lifec
 - DingTalk native ack reaction attach + recall / 原生表情贴上与撤回正常
 - markdown reply / markdown 回复正常
 - card reply using `content` field / 基于 `content` 字段的 card 回复正常
+- card in-place streaming progress updates / card 原位流式过程更新正常
+- Hermes function-call event formatting into readable step lines / Hermes 工具调用事件可格式化成可读步骤行
 - automatic markdown fallback on card failure / card 异常时自动回退 markdown
 - gateway stop -> bridge stops / gateway 停止后 bridge 跟随停止
 - gateway restart -> bridge autostarts again via hook / gateway 重启后 bridge 通过 hook 再次启动
@@ -305,6 +369,30 @@ The bridge will automatically fall back to markdown if card send fails.
 - 钉钉应用已经开通 card 相关权限
 
 如果 card 发送失败，bridge 会自动回退到 markdown。
+
+### The card only shows "processing" for a long time / 卡片长时间停留在“处理中”
+
+**EN**
+Usually this means one of these:
+- Hermes is still working and has not emitted any intermediate tool or text events yet
+- the request did not trigger tool calls, so there are no tool-step lines to show
+- Hermes timed out before returning intermediate output
+
+Check:
+- `PYTHONPATH="$HOME/.hermes/plugins/hermes-dingtalk-bridge" python3 -m hermes_dingtalk_bridge doctor`
+- `cat ~/.hermes/dingtalk-bridge.status.json`
+- `tail -n 200 ~/.hermes/logs/gateway.error.log`
+
+**中文**
+如果卡片长时间停在“处理中”，通常是下面几种情况之一：
+- Hermes 还在处理，但还没有发出中间工具事件或正文增量
+- 这条请求本身没有触发工具调用，所以没有工具步骤可显示
+- Hermes 在返回中间事件前就超时了
+
+可以检查：
+- `PYTHONPATH="$HOME/.hermes/plugins/hermes-dingtalk-bridge" python3 -m hermes_dingtalk_bridge doctor`
+- `cat ~/.hermes/dingtalk-bridge.status.json`
+- `tail -n 200 ~/.hermes/logs/gateway.error.log`
 
 ### Too many old bridge processes / 看到很多旧 bridge 进程
 

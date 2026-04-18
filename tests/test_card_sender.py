@@ -41,3 +41,24 @@ class CardSenderTests(unittest.TestCase):
         self.assertEqual(client.puts[0][1]['key'], 'content')
         self.assertEqual(client.puts[0][1]['content'], 'hello card')
         self.assertTrue(client.puts[0][1]['isFinalize'])
+
+    def test_create_handle_and_stream_multiple_updates(self):
+        client = _FakeClient()
+        service = CardReplyService(client, logger=None)
+        raw_payload = {
+            'conversationType': '1',
+            'senderId': 'u1',
+            'senderStaffId': 'u1',
+            'senderCorpId': 'corp',
+            'conversationId': 'cidx',
+            'msgId': 'm1',
+        }
+        handle = service.create_card_reply(raw_payload, 'tpl.schema', initial_text='处理中')
+        handle.update('处理中\n\n当前回复：\nhello')
+        handle.update('处理完成\n\n当前回复：\nhello world', finalize=True)
+        self.assertEqual(client.posts[0][0], '/v1.0/card/instances/createAndDeliver')
+        self.assertEqual(len(client.puts), 3)
+        self.assertFalse(client.puts[0][1]['isFinalize'])
+        self.assertEqual(client.puts[0][1]['content'], '处理中')
+        self.assertEqual(client.puts[1][1]['content'], '处理中\n\n当前回复：\nhello')
+        self.assertTrue(client.puts[2][1]['isFinalize'])

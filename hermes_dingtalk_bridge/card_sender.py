@@ -41,18 +41,31 @@ class CardReplyService:
         self.client = client
         self.logger = logger
 
-    def send_card_reply(self, raw_payload: dict, text: str, template_id: str) -> Optional[str]:
+    def create_card_reply(
+        self,
+        raw_payload: dict,
+        template_id: str,
+        *,
+        initial_text: str = "",
+    ) -> "CardReplyHandle":
         out_track_id = self._gen_out_track_id(raw_payload)
         self._create_and_deliver(raw_payload, template_id, out_track_id)
-        self._stream_finalize(out_track_id, text)
+        handle = CardReplyHandle(self, out_track_id)
+        if initial_text.strip():
+            handle.update(initial_text)
+        return handle
+
+    def send_card_reply(self, raw_payload: dict, text: str, template_id: str) -> Optional[str]:
+        handle = self.create_card_reply(raw_payload, template_id)
+        handle.update(text, finalize=True)
         if self.logger:
             self.logger.info(
                 "DingTalk card reply sent out_track_id=%s template_id=%s content_key=%s",
-                out_track_id,
+                handle.out_track_id,
                 template_id,
                 self.CONTENT_KEY,
             )
-        return out_track_id
+        return handle.out_track_id
 
     def _create_and_deliver(self, raw_payload: dict, template_id: str, out_track_id: str) -> None:
         create_body = {
@@ -72,15 +85,22 @@ class CardReplyService:
         }
         self.client.post_openapi("/v1.0/card/instances/createAndDeliver", create_body)
 
-    def _stream_finalize(self, out_track_id: str, text: str) -> None:
+    def stream_card_reply(
+        self,
+        out_track_id: str,
+        text: str,
+        *,
+        finalize: bool = False,
+        is_error: bool = False,
+    ) -> None:
         stream_body = {
             "outTrackId": out_track_id,
             "guid": str(uuid.uuid4()),
             "key": self.CONTENT_KEY,
             "content": text,
             "isFull": True,
-            "isFinalize": True,
-            "isError": False,
+            "isFinalize": finalize,
+            "isError": is_error,
         }
         self.client.put_openapi("/v1.0/card/streaming", stream_body)
 
@@ -96,3 +116,17 @@ class CardReplyService:
         digest = hashlib.sha256()
         digest.update(factor.encode("utf-8"))
         return digest.hexdigest()
+
+
+class CardReplyHandle:
+    def __init__(self, service: CardReplyService, out_track_id: str) -> None:
+        self._service = service
+        self.out_track_id = out_track_id
+
+    def update(self, text: str, *, finalize: bool = False, is_error: bool = False) -> None:
+        self._service.stream_card_reply(
+            self.out_track_id,
+            text,
+            finalize=finalize,
+            is_error=is_error,
+        )
