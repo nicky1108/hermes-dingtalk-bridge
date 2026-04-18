@@ -64,6 +64,14 @@ class DingTalkClient:
             access_token=self.get_access_token(),
         )
 
+    def put_openapi(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._json_request(
+            "PUT",
+            f"https://api.dingtalk.com{path}",
+            payload,
+            access_token=self.get_access_token(),
+        )
+
     def get_access_token(self, *, force_refresh: bool = False) -> str:
         if self._access_token and not force_refresh:
             return self._access_token
@@ -195,8 +203,15 @@ class DingTalkStreamRunner:
     def request_stop(self) -> None:
         self._stop = True
         websocket = self._websocket
-        if websocket is not None:
-            asyncio.create_task(websocket.close())
+        if websocket is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Gateway shutdown may call us during atexit after the event loop is gone.
+            # In that case we simply rely on process teardown to close the socket.
+            return
+        loop.create_task(websocket.close())
 
     async def _keepalive(self, websocket, ping_interval: int = 60) -> None:
         while True:

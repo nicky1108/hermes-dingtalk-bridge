@@ -1,4 +1,4 @@
-name: hermes-dingtalk
+name: hermes-dingtalk-bridge
 version: 0.1.0
 description: Standalone DingTalk bridge plugin for Hermes Agent
 requires_env:

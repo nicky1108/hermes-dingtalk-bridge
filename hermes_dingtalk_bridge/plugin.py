@@ -82,6 +82,7 @@ def _cmd_status(args) -> int:
         "card_template_id": config.card_template_id,
         "ack_reaction_enabled": config.ack_reaction_enabled,
         "ack_reaction_name": config.ack_reaction_name,
+        "runtime_status_path": str(config.store_path.with_suffix('.status.json')),
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

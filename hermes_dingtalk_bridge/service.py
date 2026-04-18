@@ -16,6 +16,7 @@ from .message_codec import build_conversation_name, build_hermes_input
 from .models import BridgeStatus, ConversationBinding, MessageRecord
 from .outbound_sender import OutboundSender
 from .session_store import SessionStore
+from .runtime_status import initialize_runtime_status, mark_inbound, mark_runtime_error, mark_runtime_stopped, status_path
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class BridgeService:
             self.config.conversation_prefix,
             self.config.reply_mode,
         )
+        initialize_runtime_status(self.config, source="bridge-service")
         self.store.prune_processed(ttl_days=self.config.session_ttl_days)
         health_task = asyncio.create_task(self._monitor_hermes_health())
         try:
@@ -50,11 +52,19 @@ class BridgeService:
             health_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await health_task
+            mark_runtime_stopped(self.config, reason="service-run-exit")
 
     def shutdown(self) -> None:
         logger.info("Shutting down Hermes DingTalk bridge")
-        self._connection_manager.stop()
-        self.store.close()
+        mark_runtime_stopped(self.config, reason="shutdown")
+        try:
+            self._connection_manager.stop()
+        except Exception as exc:  # pragma: no cover - defensive shutdown path
+            logger.debug("Ignoring bridge stop error during shutdown: %s", exc)
+        try:
+            self.store.close()
+        except Exception as exc:  # pragma: no cover
+            logger.debug("Ignoring bridge store close error during shutdown: %s", exc)
 
     async def _monitor_hermes_health(self) -> None:
         failures = 0
@@ -74,6 +84,7 @@ class BridgeService:
                 )
                 if failures >= self.config.hermes_healthcheck_max_failures:
                     logger.error("Hermes health monitor reached failure threshold; stopping bridge")
+                    mark_runtime_error(self.config, f"Hermes health monitor threshold reached after {failures} failures")
                     self._connection_manager.stop()
                     return
 
@@ -90,6 +101,8 @@ class BridgeService:
             event.mentions_bot,
             event.text,
         )
+        if event.message_id and event.conversation_id:
+            mark_inbound(self.config, message_id=event.message_id, conversation_id=event.conversation_id)
         if not event.message_id or not event.conversation_id:
             logger.debug("Skipping DingTalk message without ids: %s", payload)
             return
@@ -189,6 +202,7 @@ class BridgeService:
             "hermes_api_base": self.config.hermes_api_base,
             "reply_mode": self.config.reply_mode,
             "card_template_id": self.config.card_template_id,
+            "runtime_status_path": str(status_path(self.config)),
         }
         if errors:
             return BridgeStatus(False, "; ".join(errors), details)
