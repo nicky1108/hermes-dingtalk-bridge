@@ -1,0 +1,23 @@
+dingtalk_bridge:
+  hermes_api_base: http://127.0.0.1:8642/v1
+  hermes_model: hermes-agent
+  account_id: default
+  conversation_prefix: dingtalk
+  store_path: ~/.hermes/dingtalk-bridge.db
+  log_level: INFO
+  require_mention_in_groups: true
+  group_allowlist: []
+  dm_allowlist: []
+  session_ttl_days: 7
+  initial_reconnect_delay_ms: 1000
+  max_reconnect_delay_ms: 60000
+  reconnect_jitter: 0.3
+  inactivity_reconnect_seconds: 0
+  request_timeout_seconds: 60
+  message_chunk_size: 3500
+  reply_mode: markdown   # markdown | card
+  card_template_id: ""
+  ack_reaction_enabled: true
+  ack_reaction_name: "🤔思考中"
+  hermes_healthcheck_interval_seconds: 20
+  hermes_healthcheck_max_failures: 3

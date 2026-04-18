@@ -1,0 +1,10 @@
+name: hermes-dingtalk
+version: 0.1.0
+description: Standalone DingTalk bridge plugin for Hermes Agent
+requires_env:
+  - name: HERMES_DINGTALK_CLIENT_ID
+    description: DingTalk app key / client id for Stream mode
+  - name: HERMES_DINGTALK_CLIENT_SECRET
+    description: DingTalk app secret / client secret for Stream mode
+  - name: API_SERVER_KEY
+    description: Bearer token for the Hermes API server
